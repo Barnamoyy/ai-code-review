@@ -4,7 +4,9 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 dotenv.config();
 
-const ai = new GoogleGenAI({});
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY
+});
 const index = pinecone.Index("repo-context");
 
 const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.cpp', '.c', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.cs', '.md'];
@@ -56,7 +58,7 @@ async function generateEmbedding(text) {
   try {
     const response = await ai.models.embedContent({
       model: "text-embedding-004",
-      contents: [{ parts: [{ text }] }]
+      contents: [{ parts: [{ text }] }],
     });
     return response.embeddings[0].values;
   } catch (error) {

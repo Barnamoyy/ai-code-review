@@ -54,8 +54,10 @@ commitsRouter.post("/addcommit", async (req, res) => {
       [id, repo, prNumber, commitId, date]
     );
 
-    console.log("Logged commits"); 
+    console.log("Logged commits");
+    res.sendStatus(200);
   } catch (error) {
     console.error("Error logging commits:", error.message);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });

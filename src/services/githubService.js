@@ -4,7 +4,7 @@ import { octokit } from "../utils/githubClient.js";
 import { createLog } from "../routes/api/logs.js";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const baseUrl = `http://localhost:3000/api`;
+const baseUrl = `http://localhost:8080/api`;
 
 export async function deletePreviousAIComments(repo, prNumber) {
   const [owner, repoName] = repo.split("/");
@@ -78,35 +78,37 @@ export async function handlePullRequestEvent(payload) {
     commitId,
   });
 
-  if (action === "synchronize") {
+  if (action === "opened" || action === "synchronize") {
     try {
-      await axios.post(`${baseUrl}/addcommit`, {
-        repo,
-        prNumber,
-        commitId,
+      if (action === "synchronize") {
+        await axios.post(`${baseUrl}/addcommit`, {
+          repo,
+          prNumber,
+          commitId,
+        });
+        await deletePreviousAIComments(repo, prNumber);
+        await axios.post(`${baseUrl}/deletereview`, {
+          repo,
+          prNumber,
+        });
+      }
+
+      const diffResponse = await axios.get(diffUrl, {
+        headers: { Authorization: `token ${GITHUB_TOKEN}` },
       });
-      await deletePreviousAIComments(repo, prNumber);
-      await axios.post(`${baseUrl}/deletereview`, {
-        repo,
-        prNumber,
-      });
+
+      const diffText = diffResponse.data;
+      await runAIReview(repo, prNumber, diffText, commitId);
     } catch (error) {
-      await createLog("error", "Error handling synchronize action", {
+      await createLog("error", "Error handling pull request event", {
         source: "github_webhook",
         repo,
         prNumber,
         error: error.message,
       });
-      console.error("Error handling synchronize action:", error.message);
+      console.error("Error handling pull request event:", error.message);
     }
   }
-
-  const diffResponse = await axios.get(diffUrl, {
-    headers: { Authorization: `token ${GITHUB_TOKEN}` },
-  });
-
-  const diffText = diffResponse.data;
-  await runAIReview(repo, prNumber, diffText, commitId);
 }
 
 export async function postReviewCommentsBatch(
@@ -185,11 +187,16 @@ export async function postReviewCommentsBatch(
     console.log(`Posted ${githubComments.length} AI review comments`);
 
     if (response.status === 200 || response.status === 201) {
-      axios.post(`${baseUrl}/addreview`, {
+      await axios.post(`${baseUrl}/addreview`, {
         repo,
         prNumber,
         comments,
       });
+      await axios.post(`${baseUrl}/addpr`, {
+        owner, 
+        repo, 
+        prNumber
+      })
     }
   } catch (err) {
     await createLog("error", "Error posting batch review", {
