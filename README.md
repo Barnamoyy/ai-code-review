@@ -129,6 +129,12 @@ For development purposes you can use ngrok url get your webhook url by running c
 ngrok http 8080 || YOUR_PORT
 ```
 
+### Frontend Dashboard 
+
+Once the server is up an running on port 8080 or any other port you can track see the logs, review histroy, commit history and general analytics by cloning this repo 
+
+```https://github.com/Barnamoyy/ai-code-review-frontend```
+
 ### API Endpoints
 
 #### Webhooks
