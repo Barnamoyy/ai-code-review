@@ -1,8 +1,8 @@
 import { octokit } from "../utils/githubClient.js";
 import { pinecone } from "../utils/pineconeClient.js";
 import { GoogleGenAI } from "@google/genai";
-import { createLog } from "../routes/api/logs.js";
 import dotenv from "dotenv";
+import { sendLog } from "../app.js";
 dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -188,21 +188,26 @@ export async function deleteRepoIndex(repoFullName) {
         const batch = vectorIds.slice(i, i + batchSize);
         await index.deleteMany(batch);
       }
-
-      await createLog("info", "Deleted old repository index from pinecone", {
+      sendLog({
+        type: "info", 
+        message: "Deleted old repository index from pinecone",
         source: "pinecone_api",
-      });
+      })
     } else {
       console.log(`No vectors found for ${repoFullName}`);
-      await createLog("warn", `No vectors found for ${repoFullName}`, {
+      sendLog({
+        type: "warn", 
+        message: `No vectors found for ${repoFullName}`,
         source: "pinecone_api",
-      });
+      })
     }
   } catch (error) {
     console.error(`Error deleting index for ${repoFullName}:`, error.message);
-    await createLog("error", `Error deleting index for ${repoFullName}`, {
+    sendLog({
+      type: "error", 
+      message: `Error deleting index for ${repoFullName}`,
       source: "pinecone_api",
-    });
+    })
   }
 }
 
@@ -231,9 +236,11 @@ export async function indexRepository(repoFullName, branch = "main") {
   for (let i = 0; i < concurrency; i++) workers.push(worker());
   await Promise.all(workers);
 
-  await createLog("info", "Added new repository context to pinecone", {
+  sendLog({
+    type: "info", 
+    message: "Added new repository context to pinecone", 
     source: "pinecone_api",
-  });
+  })
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

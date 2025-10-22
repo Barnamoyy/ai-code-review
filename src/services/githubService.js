@@ -1,19 +1,20 @@
 import axios from "axios";
 import { runAIReview } from "./aiReviewService.js";
 import { octokit } from "../utils/githubClient.js";
-import { createLog } from "../routes/api/logs.js";
+import { sendLog } from "../app.js";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const baseUrl = `http://localhost:${process.env.PORT || 8080}/api`;
 
 export async function deletePreviousAIComments(repo, prNumber) {
   const [owner, repoName] = repo.split("/");
-
-  await createLog("info", "Deleting previous AI comments", {
+  sendLog({
+    type: "info", 
+    message: "Deleting previous AI comments",
     source: "github_api",
     repo,
     prNumber,
-  });
+  })
 
   // login as the bot user and store all the comments in the ai comments array
 
@@ -22,11 +23,13 @@ export async function deletePreviousAIComments(repo, prNumber) {
     const botLogin = botUser.login;
 
     const aiComments = [];
-    const comments = await octokit.paginate(
-      octokit.pulls.listReviewComments,
-      { owner, repo: repoName, pull_number: prNumber, per_page: 100 }
-    );
-    
+    const comments = await octokit.paginate(octokit.pulls.listReviewComments, {
+      owner,
+      repo: repoName,
+      pull_number: prNumber,
+      per_page: 100,
+    });
+
     for (const comment of comments) {
       if (comment.user && comment.user.login === botLogin) {
         aiComments.push(comment);
@@ -36,30 +39,41 @@ export async function deletePreviousAIComments(repo, prNumber) {
     // delete every comment in the ai comment
     for (const comment of aiComments) {
       try {
-        await octokit.pulls.deleteReviewComment({ owner, repo: repoName, comment_id: comment.id });
+        await octokit.pulls.deleteReviewComment({
+          owner,
+          repo: repoName,
+          comment_id: comment.id,
+        });
       } catch (err) {
-        await createLog("warn", `Could not delete comment #${comment.id}`, {
+        sendLog({
+          type: "warn", 
+          message: `Could not delete comment #${comment.id}`, 
           source: "github_api",
           repo,
           prNumber,
           error: err.message,
-        });
+        })
         console.error(`Could not delete comment #${comment.id}:`, err.message);
       }
     }
-    await createLog("info", `Deleted ${aiComments.length} AI comments`, {
+
+    sendLog({
+      type: "info", 
+      message: `Deleted ${aiComments.length} AI comments`,
       source: "github_api",
       repo,
       prNumber,
       deletedCount: aiComments.length,
-    });
+    })
   } catch (err) {
-    await createLog("error", "Error deleting AI comments", {
+    sendLog({
+      type: "error", 
+      message: "Error deleting AI comments",
       source: "github_api",
       repo,
       prNumber,
       error: err.message,
-    });
+    })
     console.error("Error deleting previous AI comments:", err.message);
   }
 }
@@ -71,7 +85,9 @@ export async function handlePullRequestEvent(payload) {
   const commitId = payload.pull_request.head.sha;
   const action = payload.action;
 
-  await createLog("info", "Handling PR event", {
+  sendLog({
+    type: "info",
+    message: "Handling PR event",
     source: "github_webhook",
     repo,
     prNumber,
@@ -90,17 +106,19 @@ export async function handlePullRequestEvent(payload) {
           });
         } catch (error) {
           console.error("Error adding commit to database:", error.message);
-          await createLog("error", "Failed to add commit", {
+          sendLog({
+            type: "error", 
+            message: "Failed to add commit", 
             source: "github_webhook",
             repo,
             prNumber,
             commitId,
-            error: error.message
-          });
+            error: error.message,
+          })
         }
-        
+
         await deletePreviousAIComments(repo, prNumber);
-        
+
         try {
           await axios.post(`${baseUrl}/deletereview`, {
             repo,
@@ -108,12 +126,14 @@ export async function handlePullRequestEvent(payload) {
           });
         } catch (error) {
           console.error("Error deleting review from database:", error.message);
-          await createLog("error", "Failed to delete review", {
+          sendLog({
+            type: "error", 
+            message: "Failed to delete review", 
             source: "github_webhook",
             repo,
             prNumber,
-            error: error.message
-          });
+            error: error.message,
+          })
         }
       }
 
@@ -124,12 +144,14 @@ export async function handlePullRequestEvent(payload) {
       const diffText = diffResponse.data;
       await runAIReview(repo, prNumber, diffText, commitId);
     } catch (error) {
-      await createLog("error", "Error handling pull request event", {
+      sendLog({
+        type: "error", 
+        message: "Error handling pull request event", 
         source: "github_webhook",
         repo,
         prNumber,
         error: error.message,
-      });
+      })
       console.error("Error handling pull request event:", error.message);
     }
   }
@@ -143,12 +165,14 @@ export async function postReviewCommentsBatch(
 ) {
   const [owner, repoName] = repo.split("/");
 
-  await createLog("info", "Starting batch review post", {
+  sendLog({
+    type: "info", 
+    message: "Starting batch review post", 
     source: "github_api",
     repo,
     prNumber,
     commentCount: comments.length,
-  });
+  })
 
   const files = await octokit.paginate(octokit.pulls.listFiles, {
     owner,
@@ -158,7 +182,6 @@ export async function postReviewCommentsBatch(
   });
 
   const fileMap = new Map(files.map((f) => [f.filename, f]));
-
 
   // we are getting the comments from the AI response
   const githubComments = [];
@@ -175,7 +198,11 @@ export async function postReviewCommentsBatch(
       continue;
     }
 
-    githubComments.push({ path: c.path, body: c.comment || c.body || "No comment provided", position });
+    githubComments.push({
+      path: c.path,
+      body: c.comment || c.body || "No comment provided",
+      position,
+    });
   }
 
   const prData = await octokit.pulls.get({
@@ -185,11 +212,13 @@ export async function postReviewCommentsBatch(
   });
 
   if (githubComments.length === 0) {
-    await createLog("warn", "No valid comments to post", {
+    sendLog({
+      type: "warn", 
+      message: "No valid comments to post", 
       source: "github_api",
       repo,
       prNumber,
-    });
+    })
     console.warn("No valid comments to post");
     return;
   }
@@ -206,7 +235,8 @@ export async function postReviewCommentsBatch(
 
   const CHUNK_SIZE = 50;
   const chunks = [];
-  for (let i = 0; i < githubComments.length; i += CHUNK_SIZE) chunks.push(githubComments.slice(i, i + CHUNK_SIZE));
+  for (let i = 0; i < githubComments.length; i += CHUNK_SIZE)
+    chunks.push(githubComments.slice(i, i + CHUNK_SIZE));
 
   try {
     for (const chunk of chunks) {
@@ -221,36 +251,51 @@ export async function postReviewCommentsBatch(
           comments: chunk,
         })
       );
-      console.log(`Posted ${chunk.length} AI review comments`);
+      sendLog({
+        type: "info", 
+        message: `Posted ${chunk.length} AI review comments`,
+        source: "github_api"
+      })
     }
 
-    // After successfully posting comments to GitHub, update our database
     try {
       await axios.post(`${baseUrl}/addreview`, { repo, prNumber, comments });
       await axios.post(`${baseUrl}/addpr`, { owner, repo, prNumber });
-      await createLog("info", "Successfully added review to database", {
+      sendLog({
+        type: "info", 
+        message: "Successfully added review to database",
         source: "github_api",
         repo,
         prNumber,
-        commentCount: comments.length
-      });
+        commentCount: comments.length,
+      })
     } catch (dbErr) {
-      await createLog("error", "Error updating database after review", {
+      sendLog({
+        type: "error", 
+        message: "Error updating database after review", 
         source: "github_api",
         repo,
         prNumber,
-        error: dbErr.message
-      });
-      console.error("Failed to update database after successful review:", dbErr.message);
+        error: dbErr.message,
+      })
+      console.error(
+        "Failed to update database after successful review:",
+        dbErr.message
+      );
     }
   } catch (err) {
-    await createLog("error", "Error posting batch review", {
+    sendLog({
+      type: "error", 
+      message: "Error posting batch review", 
       source: "github_api",
       repo,
       prNumber,
-      error: err.response?.data || err.message
-    });
-    console.error("Error posting batch review:", err.response?.data || err.message);
+      error: err.response?.data || err.message,
+    })
+    console.error(
+      "Error posting batch review:",
+      err.response?.data || err.message
+    );
   }
 }
 
