@@ -1,14 +1,41 @@
 import { octokit } from "../utils/githubClient.js";
 import { pinecone } from "../utils/pineconeClient.js";
 import { GoogleGenAI } from "@google/genai";
+import { createLog } from "../routes/api/logs.js";
 import dotenv from "dotenv";
 dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const index = pinecone.Index("repo-context");
 
-const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.cpp', '.c', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.cs', '.md'];
-const IGNORE_PATTERNS = ['node_modules', 'dist', 'build', '.git', 'coverage', '.next', 'package-lock.json', 'yarn.lock'];
+const CODE_EXTENSIONS = [
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".py",
+  ".java",
+  ".cpp",
+  ".c",
+  ".go",
+  ".rs",
+  ".rb",
+  ".php",
+  ".swift",
+  ".kt",
+  ".cs",
+  ".md",
+];
+const IGNORE_PATTERNS = [
+  "node_modules",
+  "dist",
+  "build",
+  ".git",
+  "coverage",
+  ".next",
+  "package-lock.json",
+  "yarn.lock",
+];
 
 // Tunable parameters
 const MAX_FILE_SIZE = 1024 * 1024; // 1 MB
@@ -17,21 +44,34 @@ const EMBEDDING_CONCURRENCY = 4;
 const UPSERT_BATCH_SIZE = 100;
 
 // Use git tree API to list all files in one call (recursive)
-async function fetchRepoFiles(owner, repo, branch = 'main') {
+async function fetchRepoFiles(owner, repo, branch = "main") {
   try {
-    const { data: refData } = await octokit.git.getRef({ owner, repo, ref: `heads/${branch}` });
-    const treeResponse = await octokit.git.getTree({ owner, repo, tree_sha: refData.object.sha, recursive: '1' });
+    const { data: refData } = await octokit.git.getRef({
+      owner,
+      repo,
+      ref: `heads/${branch}`,
+    });
+    const treeResponse = await octokit.git.getTree({
+      owner,
+      repo,
+      tree_sha: refData.object.sha,
+      recursive: "1",
+    });
     const files = (treeResponse.data.tree || [])
-      .filter(item => item.type === 'blob')
-      .map(item => ({ path: item.path, sha: item.sha }));
+      .filter((item) => item.type === "blob")
+      .map((item) => ({ path: item.path, sha: item.sha }));
 
     // Filter by extension and ignore patterns
-    return files.filter(f => {
-      if (IGNORE_PATTERNS.some(pattern => f.path.includes(pattern))) return false;
-      return CODE_EXTENSIONS.some(ext => f.path.endsWith(ext));
+    return files.filter((f) => {
+      if (IGNORE_PATTERNS.some((pattern) => f.path.includes(pattern)))
+        return false;
+      return CODE_EXTENSIONS.some((ext) => f.path.endsWith(ext));
     });
   } catch (error) {
-    console.error(`Error fetching tree for ${owner}/${repo}@${branch}:`, error.message);
+    console.error(
+      `Error fetching tree for ${owner}/${repo}@${branch}:`,
+      error.message
+    );
     return [];
   }
 }
@@ -41,8 +81,8 @@ async function fetchBlobBySha(owner, repo, sha) {
   try {
     const { data } = await octokit.git.getBlob({ owner, repo, file_sha: sha });
     // data.content is base64 encoded
-    const content = Buffer.from(data.content, 'base64').toString('utf8');
-    return { content, size: Buffer.byteLength(content, 'utf8') };
+    const content = Buffer.from(data.content, "base64").toString("utf8");
+    return { content, size: Buffer.byteLength(content, "utf8") };
   } catch (error) {
     console.error(`Error fetching blob ${sha}:`, error.message);
     return null;
@@ -74,7 +114,9 @@ async function indexFile(owner, repo, file) {
   const blob = await fetchBlobBySha(owner, repo, file.sha);
   if (!blob || !blob.content) return 0;
   if (blob.size > MAX_FILE_SIZE) {
-    console.warn(`Skipping ${file.path} (${blob.size} bytes) - exceeds ${MAX_FILE_SIZE} limit`);
+    console.warn(
+      `Skipping ${file.path} (${blob.size} bytes) - exceeds ${MAX_FILE_SIZE} limit`
+    );
     return 0;
   }
 
@@ -90,8 +132,8 @@ async function indexFile(owner, repo, file) {
         chunkIndex: i,
         totalChunks: chunks.length,
         repo: `${owner}/${repo}`,
-        fileType: file.path.split('.').pop()
-      }
+        fileType: file.path.split(".").pop(),
+      },
     });
   }
 
@@ -104,14 +146,18 @@ async function indexFile(owner, repo, file) {
   let created = 0;
   for (const batch of batchedVectors) {
     // Generate embeddings for the batch in parallel with limited concurrency
-    const embeddingPromises = batch.map(v => generateEmbedding(v.text));
+    const embeddingPromises = batch.map((v) => generateEmbedding(v.text));
     const embeddings = await Promise.all(embeddingPromises);
 
     const upsertVectors = [];
     for (let i = 0; i < embeddings.length; i++) {
       const emb = embeddings[i];
       if (!emb) continue;
-      upsertVectors.push({ id: batch[i].id, values: emb, metadata: batch[i].metadata });
+      upsertVectors.push({
+        id: batch[i].id,
+        values: emb,
+        metadata: batch[i].metadata,
+      });
     }
 
     if (upsertVectors.length > 0) {
@@ -130,11 +176,11 @@ export async function deleteRepoIndex(repoFullName) {
       topK: 10000,
       includeMetadata: true,
       filter: {
-        repo: { $eq: repoFullName }
-      }
+        repo: { $eq: repoFullName },
+      },
     });
 
-    const vectorIds = queryResponse.matches.map(match => match.id);
+    const vectorIds = queryResponse.matches.map((match) => match.id);
 
     if (vectorIds.length > 0) {
       const batchSize = 1000;
@@ -142,16 +188,26 @@ export async function deleteRepoIndex(repoFullName) {
         const batch = vectorIds.slice(i, i + batchSize);
         await index.deleteMany(batch);
       }
+
+      await createLog("info", "Deleted old repository index from pinecone", {
+        source: "pinecone_api",
+      });
     } else {
       console.log(`No vectors found for ${repoFullName}`);
+      await createLog("warn", `No vectors found for ${repoFullName}`, {
+        source: "pinecone_api",
+      });
     }
   } catch (error) {
     console.error(`Error deleting index for ${repoFullName}:`, error.message);
+    await createLog("error", `Error deleting index for ${repoFullName}`, {
+      source: "pinecone_api",
+    });
   }
 }
 
-export async function indexRepository(repoFullName, branch = 'main') {
-  const [owner, repo] = repoFullName.split('/');
+export async function indexRepository(repoFullName, branch = "main") {
+  const [owner, repo] = repoFullName.split("/");
   const files = await fetchRepoFiles(owner, repo, branch);
 
   let totalChunks = 0;
@@ -174,14 +230,18 @@ export async function indexRepository(repoFullName, branch = 'main') {
   const workers = [];
   for (let i = 0; i < concurrency; i++) workers.push(worker());
   await Promise.all(workers);
+
+  await createLog("info", "Added new repository context to pinecone", {
+    source: "pinecone_api",
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const repo = process.argv[2];
-  const branch = process.argv[3] || 'main';
+  const branch = process.argv[3] || "main";
 
   if (!repo) {
-    console.error('Usage: node indexRepository.js <owner/repo> [branch]');
+    console.error("Usage: node indexRepository.js <owner/repo> [branch]");
     process.exit(1);
   }
 
