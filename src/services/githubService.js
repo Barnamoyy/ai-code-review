@@ -138,7 +138,10 @@ export async function handlePullRequestEvent(payload) {
       }
 
       const diffResponse = await axios.get(diffUrl, {
-        headers: { Authorization: `token ${GITHUB_TOKEN}` },
+        headers: {
+          Authorization: `token ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3.diff",
+        },
       });
 
       const diffText = diffResponse.data;
